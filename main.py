@@ -50,114 +50,169 @@ class GitWorker(QThread):
             repo_name = os.path.basename(repo_path)
             self.progress_signal.emit(i + 1, total)
 
-            # Prepare the command
-            if self.operation == 'pull':
-                cmd = ['git', 'pull']
-            else:  # push
-                cmd = ['git', 'push']
-
             try:
-                # Change to the repository directory
-                self.update_signal.emit(repo_path, f"Starting {self.operation} for {repo_name}...", "running")
+                self.update_signal.emit(repo_path, f"🔍 [DEBUG] Starting {self.operation} operation for {repo_name}...", "info")
+                self.update_signal.emit(repo_path, f"🔍 [DEBUG] Working directory: {repo_path}", "info")
                 
                 # Get current branch information before operation
                 branch_cmd = ['git', 'rev-parse', '--abbrev-ref', 'HEAD']
                 branch_process = subprocess.run(branch_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 current_branch = branch_process.stdout.strip() if branch_process.returncode == 0 else "unknown"
+                self.update_signal.emit(repo_path, f"🔍 [DEBUG] Current branch: {current_branch}", "info")
                 
                 # Get current commit hash before operation
                 hash_cmd = ['git', 'rev-parse', '--short', 'HEAD']
                 hash_process = subprocess.run(hash_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 before_commit = hash_process.stdout.strip() if hash_process.returncode == 0 else "unknown"
+                self.update_signal.emit(repo_path, f"🔍 [DEBUG] Current commit: {before_commit}", "info")
                 
-                # Execute the Git command
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=repo_path,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    universal_newlines=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                
-                # Read output in real-time
-                output_lines = []
-                while process.poll() is None:
-                    stdout_line = process.stdout.readline()
-                    if stdout_line:
-                        line = stdout_line.strip()
-                        output_lines.append(line)
-                        self.update_signal.emit(repo_path, line, "running")
+                if self.operation == 'pull':
+                    # Simple pull operation
+                    self.update_signal.emit(repo_path, f"📥 Pulling changes from remote...", "running")
+                    success = self._execute_git_command(repo_path, ['git', 'pull'])
                     
-                    stderr_line = process.stderr.readline()
-                    if stderr_line:
-                        line = stderr_line.strip()
-                        self.update_signal.emit(repo_path, line, "error")
-                
-                # Get remaining output
-                stdout, stderr = process.communicate()
-                if stdout:
-                    lines = stdout.strip().split('\n')
-                    for line in lines:
-                        if line and line not in output_lines:
-                            output_lines.append(line)
-                            self.update_signal.emit(repo_path, line, "running")
+                elif self.operation == 'push':
+                    # Complete push operation: add, commit, push
+                    self.update_signal.emit(repo_path, f"📤 Starting push sequence...", "running")
+                    
+                    # Step 1: Check if there are any changes to commit
+                    status_cmd = ['git', 'status', '--porcelain']
+                    status_result = subprocess.run(status_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    
+                    if status_result.returncode == 0:
+                        changes = status_result.stdout.strip()
+                        if changes:
+                            self.update_signal.emit(repo_path, f"🔍 [DEBUG] Found changes to commit:\n{changes}", "info")
                             
-                if stderr:
-                    lines = stderr.strip().split('\n')
-                    for line in lines:
-                        if line:
-                            self.update_signal.emit(repo_path, line, "error")
+                            # Step 2: Add all changes
+                            self.update_signal.emit(repo_path, f"➕ Adding all changes (git add .)...", "running")
+                            if not self._execute_git_command(repo_path, ['git', 'add', '.']):
+                                continue
+                            
+                            # Step 3: Commit changes
+                            self.update_signal.emit(repo_path, f"💾 Committing changes with message 'batch update'...", "running")
+                            if not self._execute_git_command(repo_path, ['git', 'commit', '-m', 'batch update']):
+                                continue
+                        else:
+                            self.update_signal.emit(repo_path, f"ℹ️ No local changes to commit", "info")
+                    
+                    # Step 4: Push to remote
+                    self.update_signal.emit(repo_path, f"🚀 Pushing to remote origin/{current_branch}...", "running")
+                    success = self._execute_git_command(repo_path, ['git', 'push', 'origin', current_branch])
                 
-                # Check return code
-                if process.returncode == 0:
+                if success:
                     # Get new commit hash after operation
                     hash_process = subprocess.run(hash_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     after_commit = hash_process.stdout.strip() if hash_process.returncode == 0 else "unknown"
                     
-                    # Check if anything changed
                     if before_commit != after_commit and before_commit != "unknown" and after_commit != "unknown":
-                        # Get commit count difference
-                        count_cmd = ['git', 'rev-list', '--count', f"{before_commit}..{after_commit}"]
-                        count_process = subprocess.run(count_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                        commit_count = count_process.stdout.strip() if count_process.returncode == 0 else "?"
-                        
-                        self.update_signal.emit(
-                            repo_path, 
-                            f"{self.operation.capitalize()} completed successfully on branch '{current_branch}'. "
-                            f"Changed from {before_commit} to {after_commit} ({commit_count} new commits)", 
-                            "success"
-                        )
+                        # Check commit count difference for pull operations
+                        if self.operation == 'pull':
+                            count_cmd = ['git', 'rev-list', '--count', f"{before_commit}..{after_commit}"]
+                            count_process = subprocess.run(count_cmd, cwd=repo_path, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                            commit_count = count_process.stdout.strip() if count_process.returncode == 0 else "?"
+                            self.update_signal.emit(
+                                repo_path, 
+                                f"✅ {self.operation.capitalize()} completed successfully on branch '{current_branch}'. "
+                                f"Changed from {before_commit} to {after_commit} ({commit_count} new commits)", 
+                                "success"
+                            )
+                        else:
+                            self.update_signal.emit(
+                                repo_path, 
+                                f"✅ {self.operation.capitalize()} completed successfully on branch '{current_branch}'. "
+                                f"Pushed changes from {before_commit} to {after_commit}", 
+                                "success"
+                            )
                     else:
                         self.update_signal.emit(
                             repo_path, 
-                            f"{self.operation.capitalize()} completed successfully on branch '{current_branch}'. "
+                            f"✅ {self.operation.capitalize()} completed successfully on branch '{current_branch}'. "
                             f"No new changes.", 
                             "success"
                         )
-                else:
-                    # Provide more detailed error information
-                    error_msg = f"{self.operation.capitalize()} failed with code {process.returncode}"
-                    
-                    # Add more context based on common error patterns
-                    if any("Permission denied" in line for line in output_lines):
-                        error_msg += ". Permission error: Check your SSH keys or credentials."
-                    elif any("Authentication failed" in line for line in output_lines):
-                        error_msg += ". Authentication failed: Check your username/password or SSH keys."
-                    elif any("Could not resolve host" in line for line in output_lines):
-                        error_msg += ". Network error: Could not resolve host. Check your network connection."
-                    elif any("conflict" in line.lower() for line in output_lines):
-                        error_msg += ". Merge conflict detected: Please resolve conflicts manually."
-                    
-                    self.update_signal.emit(repo_path, error_msg, "error")
             
             except Exception as e:
-                detailed_error = f"Error: {str(e)}"
+                detailed_error = f"💥 Exception occurred: {str(e)}"
                 self.update_signal.emit(repo_path, detailed_error, "error")
-                self.update_signal.emit(repo_path, f"Exception occurred during {self.operation} operation. Check repository access and network.", "error")
+                self.update_signal.emit(repo_path, f"❌ {self.operation.capitalize()} operation failed due to exception. Check repository access and network.", "error")
         
         self.finished_signal.emit()
+
+    def _execute_git_command(self, repo_path, cmd):
+        """Execute a git command and return success status"""
+        try:
+            self.update_signal.emit(repo_path, f"🔍 [DEBUG] Executing: {' '.join(cmd)}", "info")
+            
+            process = subprocess.Popen(
+                cmd,
+                cwd=repo_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                universal_newlines=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # Read output in real-time
+            output_lines = []
+            while process.poll() is None:
+                stdout_line = process.stdout.readline()
+                if stdout_line:
+                    line = stdout_line.strip()
+                    if line:
+                        output_lines.append(line)
+                        self.update_signal.emit(repo_path, f"📝 {line}", "running")
+                
+                stderr_line = process.stderr.readline()
+                if stderr_line:
+                    line = stderr_line.strip()
+                    if line:
+                        self.update_signal.emit(repo_path, f"⚠️ {line}", "warning")
+            
+            # Get remaining output
+            stdout, stderr = process.communicate()
+            if stdout:
+                lines = stdout.strip().split('\n')
+                for line in lines:
+                    if line and line not in output_lines:
+                        output_lines.append(line)
+                        self.update_signal.emit(repo_path, f"📝 {line}", "running")
+                        
+            if stderr:
+                lines = stderr.strip().split('\n')
+                for line in lines:
+                    if line:
+                        self.update_signal.emit(repo_path, f"⚠️ {line}", "warning")
+            
+            # Check return code
+            if process.returncode == 0:
+                self.update_signal.emit(repo_path, f"✅ Command completed successfully: {' '.join(cmd)}", "info")
+                return True
+            else:
+                # Provide more detailed error information
+                error_msg = f"❌ Command failed with code {process.returncode}: {' '.join(cmd)}"
+                
+                # Add more context based on common error patterns
+                if any("Permission denied" in line for line in output_lines):
+                    error_msg += ". Permission error: Check your SSH keys or credentials."
+                elif any("Authentication failed" in line for line in output_lines):
+                    error_msg += ". Authentication failed: Check your username/password or SSH keys."
+                elif any("Could not resolve host" in line for line in output_lines):
+                    error_msg += ". Network error: Could not resolve host. Check your network connection."
+                elif any("conflict" in line.lower() for line in output_lines):
+                    error_msg += ". Merge conflict detected: Please resolve conflicts manually."
+                elif any("nothing to commit" in line.lower() for line in output_lines):
+                    error_msg += ". No changes to commit."
+                elif any("up-to-date" in line.lower() for line in output_lines):
+                    error_msg += ". Already up-to-date."
+                
+                self.update_signal.emit(repo_path, error_msg, "error")
+                return False
+                
+        except Exception as e:
+            self.update_signal.emit(repo_path, f"💥 Exception in git command: {str(e)}", "error")
+            return False
 
     def stop(self):
         self.running = False
@@ -452,20 +507,44 @@ class GitBatchManager(QMainWindow):
         ])
         
         # Set table properties
-        self.repo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.repo_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.repo_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        self.repo_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        # Allow manual column resizing for all columns
+        self.repo_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        
+        # Set minimum widths for each column
+        self.repo_table.horizontalHeader().setMinimumSectionSize(50)
+        self.repo_table.setColumnWidth(0, 60)   # Checkbox column
+        self.repo_table.setColumnWidth(1, 150)  # Repository name
+        self.repo_table.setColumnWidth(2, 200)  # Repository path
+        self.repo_table.setColumnWidth(3, 100)  # Branch
+        self.repo_table.setColumnWidth(4, 80)   # Status
+        self.repo_table.setColumnWidth(5, 100)  # Sync status
+        self.repo_table.setColumnWidth(6, 150)  # Last commit
+        self.repo_table.setColumnWidth(7, 100)  # Author
+        self.repo_table.setColumnWidth(8, 200)  # Remote URL
+        
+        # Enable word wrap for text content
+        self.repo_table.setWordWrap(True)
+        
+        # Set row height to accommodate wrapped text
+        self.repo_table.verticalHeader().setDefaultSectionSize(60)
+        self.repo_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        
+        # Other table properties
         self.repo_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.repo_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         
+        # Enable sorting
+        self.repo_table.setSortingEnabled(True)
+        
+        # Set alternating row colors for better readability
+        self.repo_table.setAlternatingRowColors(True)
+        
         # Connect table cell click event
         self.repo_table.cellClicked.connect(self.handle_cell_click)
+        
+        # Enable right-click context menu for table header
+        self.repo_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.repo_table.horizontalHeader().customContextMenuRequested.connect(self.show_header_context_menu)
         
         # Selection buttons
         selection_layout = QHBoxLayout()
@@ -622,16 +701,23 @@ class GitBatchManager(QMainWindow):
         self.repo_table.setCellWidget(row, 0, checkbox_cell)
         
         # Repository name
-        self.repo_table.setItem(row, 1, QTableWidgetItem(repo_name))
+        name_item = self._create_table_item(repo_name)
+        self.repo_table.setItem(row, 1, name_item)
         
         # Repository path
-        self.repo_table.setItem(row, 2, QTableWidgetItem(repo_path))
+        path_item = self._create_table_item(repo_path)
+        path_item.setForeground(QColor(0, 0, 255))  # Blue for clickable path
+        font = QFont()
+        font.setUnderline(True)
+        path_item.setFont(font)
+        self.repo_table.setItem(row, 2, path_item)
         
         # Branch
-        self.repo_table.setItem(row, 3, QTableWidgetItem(branch))
+        branch_item = self._create_table_item(branch)
+        self.repo_table.setItem(row, 3, branch_item)
         
         # Status
-        status_item = QTableWidgetItem(self.tr(f"status_{status}"))
+        status_item = self._create_table_item(self.tr(f"status_{status}"))
         if status == "clean":
             status_item.setForeground(QColor(0, 128, 0))  # Green
         elif status == "modified":
@@ -641,7 +727,7 @@ class GitBatchManager(QMainWindow):
         self.repo_table.setItem(row, 4, status_item)
         
         # Sync status
-        sync_status_item = QTableWidgetItem(self.tr(f"sync_{sync_status}"))
+        sync_status_item = self._create_table_item(self.tr(f"sync_{sync_status}"))
         if sync_status == "synced":
             sync_status_item.setForeground(QColor(0, 128, 0))  # Green
         elif sync_status == "behind":
@@ -657,13 +743,15 @@ class GitBatchManager(QMainWindow):
         self.repo_table.setItem(row, 5, sync_status_item)
         
         # Last commit
-        self.repo_table.setItem(row, 6, QTableWidgetItem(last_commit))
+        commit_item = self._create_table_item(last_commit)
+        self.repo_table.setItem(row, 6, commit_item)
         
         # Author
-        self.repo_table.setItem(row, 7, QTableWidgetItem(author))
+        author_item = self._create_table_item(author)
+        self.repo_table.setItem(row, 7, author_item)
         
         # Remote URL
-        url_item = QTableWidgetItem(remote_url)
+        url_item = self._create_table_item(remote_url)
         if remote_url:
             url_item.setForeground(QColor(0, 0, 255))  # Blue for hyperlink
             font = QFont()
@@ -674,6 +762,13 @@ class GitBatchManager(QMainWindow):
         # Log the found repository
         sync_info = f" [{self.tr(f'sync_{sync_status}')}]" if sync_status != "unknown" else ""
         self.log_message(f"Found Git repository: {repo_name} ({branch}){sync_info}", "info")
+
+    def _create_table_item(self, text):
+        """Create a table widget item with proper text wrapping and alignment"""
+        item = QTableWidgetItem(str(text))
+        # Enable word wrap by setting the text alignment
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        return item
     
     def scan_finished(self):
         """Called when repository scanning is complete"""
@@ -681,15 +776,23 @@ class GitBatchManager(QMainWindow):
         self.log_message(f"Scan complete. Found {count} Git repositories.", "success")
     
     def select_all_repos(self):
-        """Select all repositories"""
+        """Select all visible repositories"""
         for row in range(self.repo_table.rowCount()):
+            # Skip hidden rows (filtered out)
+            if self.repo_table.isRowHidden(row):
+                continue
+                
             checkbox = self.repo_table.cellWidget(row, 0).findChild(QCheckBox)
             if checkbox:
                 checkbox.setChecked(True)
     
     def deselect_all_repos(self):
-        """Deselect all repositories"""
+        """Deselect all visible repositories"""
         for row in range(self.repo_table.rowCount()):
+            # Skip hidden rows (filtered out)
+            if self.repo_table.isRowHidden(row):
+                continue
+                
             checkbox = self.repo_table.cellWidget(row, 0).findChild(QCheckBox)
             if checkbox:
                 checkbox.setChecked(False)
@@ -698,6 +801,10 @@ class GitBatchManager(QMainWindow):
         """Get a list of selected repository paths"""
         selected_repos = []
         for row in range(self.repo_table.rowCount()):
+            # Skip hidden rows (filtered out)
+            if self.repo_table.isRowHidden(row):
+                continue
+                
             checkbox = self.repo_table.cellWidget(row, 0).findChild(QCheckBox)
             if checkbox and checkbox.isChecked():
                 repo_path = self.repo_table.item(row, 2).text()
@@ -713,15 +820,26 @@ class GitBatchManager(QMainWindow):
                                "Please select at least one repository.")
             return
         
+        # Log detailed information about the operation
+        op_name = "pull" if operation == "pull" else "push"
+        self.log_message(f"🚀 Starting batch {op_name} operation on {len(selected_repos)} repositories...", "info")
+        
+        # Log selected repositories for debugging
+        self.log_message(f"🔍 [DEBUG] Selected repositories:", "info")
+        for i, repo_path in enumerate(selected_repos, 1):
+            repo_name = os.path.basename(repo_path)
+            self.log_message(f"🔍 [DEBUG]   {i}. {repo_name} ({repo_path})", "info")
+        
+        if operation == "push":
+            self.log_message(f"📤 Push operation will: 1) git add . 2) git commit -m 'batch update' 3) git push origin", "info")
+        else:
+            self.log_message(f"📥 Pull operation will: git pull", "info")
+        
         # Disable buttons during operation
         self.set_buttons_enabled(False)
         
         # Reset progress bar
         self.progress_bar.setValue(0)
-        
-        # Log the operation
-        op_name = "pull" if operation == "pull" else "push"
-        self.log_message(f"Starting batch {op_name} operation on {len(selected_repos)} repositories...", "info")
         
         # Start the worker thread
         if self.git_worker and self.git_worker.isRunning():
@@ -772,6 +890,68 @@ class GitBatchManager(QMainWindow):
         self.pull_btn.setEnabled(enabled)
         self.push_btn.setEnabled(enabled)
     
+    def show_header_context_menu(self, position):
+        """Show context menu for table header with column width options"""
+        menu = QMenu(self)
+        
+        # Auto-resize options
+        auto_fit_action = QAction(self.tr("auto_fit_columns"), self)
+        auto_fit_action.triggered.connect(self.auto_fit_columns)
+        menu.addAction(auto_fit_action)
+        
+        reset_widths_action = QAction(self.tr("reset_column_widths"), self)
+        reset_widths_action.triggered.connect(self.reset_column_widths)
+        menu.addAction(reset_widths_action)
+        
+        menu.addSeparator()
+        
+        # Individual column resize options
+        columns = [
+            (1, self.tr("repo_name")),
+            (2, self.tr("repo_path")),
+            (3, self.tr("branch")),
+            (4, self.tr("status")),
+            (5, self.tr("sync_status")),
+            (6, self.tr("last_commit")),
+            (7, self.tr("author")),
+            (8, self.tr("remote_url"))
+        ]
+        
+        for col_index, col_name in columns:
+            action = QAction(f"{self.tr('fit_column')}: {col_name}", self)
+            action.triggered.connect(lambda checked, idx=col_index: self.auto_fit_column(idx))
+            menu.addAction(action)
+        
+        # Show menu at cursor position
+        menu.exec_(self.repo_table.horizontalHeader().mapToGlobal(position))
+
+    def auto_fit_columns(self):
+        """Auto-fit all columns to content"""
+        self.repo_table.resizeColumnsToContents()
+        # Set minimum widths to prevent columns from becoming too narrow
+        for col in range(self.repo_table.columnCount()):
+            if col == 0:  # Checkbox column
+                self.repo_table.setColumnWidth(col, max(60, self.repo_table.columnWidth(col)))
+            elif col in [1, 2]:  # Name and path columns
+                self.repo_table.setColumnWidth(col, max(150, self.repo_table.columnWidth(col)))
+            else:
+                self.repo_table.setColumnWidth(col, max(80, self.repo_table.columnWidth(col)))
+
+    def auto_fit_column(self, column):
+        """Auto-fit specific column to content"""
+        self.repo_table.resizeColumnToContents(column)
+        # Set minimum width
+        min_width = 60 if column == 0 else (150 if column in [1, 2] else 80)
+        current_width = self.repo_table.columnWidth(column)
+        self.repo_table.setColumnWidth(column, max(min_width, current_width))
+
+    def reset_column_widths(self):
+        """Reset all columns to default widths"""
+        default_widths = [60, 150, 200, 100, 80, 100, 150, 100, 200]
+        for col, width in enumerate(default_widths):
+            if col < self.repo_table.columnCount():
+                self.repo_table.setColumnWidth(col, width)
+
     def apply_sync_filter(self):
         """Apply filter based on sync status"""
         filter_value = self.sync_filter_combo.currentData()
@@ -888,8 +1068,23 @@ class GitBatchManager(QMainWindow):
     
     def handle_cell_click(self, row, column):
         """Handle cell click events"""
+        # Check if the clicked cell is in the path column (column 2)
+        if column == 2:
+            path = self.repo_table.item(row, column).text()
+            if path and os.path.exists(path):
+                # Open folder in file explorer
+                if platform.system() == "Windows":
+                    os.startfile(path)
+                elif platform.system() == "Darwin":  # macOS
+                    subprocess.run(["open", path])
+                else:  # Linux
+                    subprocess.run(["xdg-open", path])
+                self.log_message(f"Opening folder: {path}", "info")
+            else:
+                self.log_message(f"Path does not exist: {path}", "warning")
+        
         # Check if the clicked cell is in the URL column (column 8)
-        if column == 8:
+        elif column == 8:
             url = self.repo_table.item(row, column).text()
             if url and (url.startswith("http://") or url.startswith("https://")):
                 QDesktopServices.openUrl(QUrl(url))
