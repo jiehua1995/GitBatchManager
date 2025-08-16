@@ -34,14 +34,10 @@ jobs:
       run: |
         if [[ "$(uname)" == "Linux" ]]; then
           sudo apt-get update
-          sudo apt-get install -y build-essential python3.12-dev
+          sudo apt-get install -y build-essential python3.12-dev zip
         elif [[ "$(uname)" == "Darwin" ]]; then
-          brew install python@3.12
+          brew install python@3.12 zip
         fi
-
-    - name: Check PySide6 plugins
-      run: |
-        python -c "import PySide6, os; print('PySide6 base path:', os.path.dirname(PySide6.__file__)); print('Qt plugins:', os.listdir(os.path.join(os.path.dirname(PySide6.__file__), 'Qt', 'plugins')))"
 
     - name: Build executable with build.py
       run: |
@@ -50,13 +46,23 @@ jobs:
     - name: Prepare release version
       id: release
       run: |
-        DATE=$(date +'%Y.%m.%d')
-        echo "RELEASE_TAG=$DATE" >> $GITHUB_ENV
-        echo "RELEASE_NAME=Release-$DATE" >> $GITHUB_ENV
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set DATE=%%c.%%a.%%b
+          echo "RELEASE_TAG=%DATE%" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Release-%DATE%" >> $GITHUB_ENV
+        else
+          DATE=$(date +'%Y.%m.%d')
+          echo "RELEASE_TAG=$DATE" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Release-$DATE" >> $GITHUB_ENV
+        fi
+
+    - name: Zip dist folder
+      run: |
+        zip -r dist-${{ runner.os }}.zip dist
 
     - name: Create GitHub Release
       id: create_release
-      uses: gh-actions/create-release@v2
+      uses: actions/create-release@v1
       with:
         tag_name: ${{ env.RELEASE_TAG }}
         release_name: ${{ env.RELEASE_NAME }}
@@ -69,6 +75,6 @@ jobs:
       uses: actions/upload-release-asset@v1
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/
-        asset_name: ${{ matrix.os }}-dist.zip
+        asset_path: dist-${{ runner.os }}.zip
+        asset_name: dist-${{ runner.os }}.zip
         asset_content_type: application/zip
