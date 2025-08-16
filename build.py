@@ -3,6 +3,7 @@ import subprocess
 import platform
 import PySide6
 import datetime
+import argparse
 
 # ----------------------------
 # Multi-language messages

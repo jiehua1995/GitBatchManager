@@ -18,12 +18,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QFileDialog, QLabel, QProgressBar, QTextEdit, QCheckBox,
-    QMenu, QMessageBox, QSplitter, QAbstractItemView
+    QMenu, QMessageBox, QSplitter, QAbstractItemView, QComboBox
 )
 from PySide6.QtGui import QIcon, QColor, QFont, QPixmap, QAction, QDesktopServices
 from PySide6.QtCore import (
     Qt, QThread, Signal, QSettings, QTranslator, QLocale,
-    QCoreApplication, QDir, QUrl
+    QCoreApplication, QDir, QUrl, QDateTime
 )
 
 
@@ -165,7 +165,7 @@ class GitWorker(QThread):
 
 class GitRepoScanner(QThread):
     """Thread for scanning directories for Git repositories"""
-    repo_found_signal = Signal(str, str, str, str, str, str, str)  # repo_name, repo_path, branch, status, last_commit, author, remote_url
+    repo_found_signal = Signal(str, str, str, str, str, str, str, str)  # repo_name, repo_path, branch, status, last_commit, author, remote_url, sync_status
     finished_signal = Signal()
 
     def __init__(self, parent_dir):
@@ -217,6 +217,9 @@ class GitRepoScanner(QThread):
                     except subprocess.SubprocessError:
                         status = "unknown"
                     
+                    # Get sync status with remote
+                    sync_status = self.get_sync_status(repo_path, branch)
+                    
                     # Get last commit info
                     try:
                         process = subprocess.run(
@@ -257,13 +260,101 @@ class GitRepoScanner(QThread):
                     except subprocess.SubprocessError:
                         remote_url = ""
                     
-                    self.repo_found_signal.emit(repo_name, repo_path, branch, status, last_commit, author, remote_url)
+                    self.repo_found_signal.emit(repo_name, repo_path, branch, status, last_commit, author, remote_url, sync_status)
         
         except Exception as e:
             print(f"Error scanning repositories: {str(e)}")
         
         finally:
             self.finished_signal.emit()
+
+    def get_sync_status(self, repo_path, branch):
+        """Get synchronization status with remote repository"""
+        try:
+            # First, try to fetch from remote to get latest remote state
+            fetch_process = subprocess.run(
+                ['git', 'fetch', '--dry-run'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=10,  # Add timeout to prevent hanging
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # Check if remote branch exists
+            remote_branch = f"origin/{branch}"
+            remote_check = subprocess.run(
+                ['git', 'rev-parse', '--verify', remote_branch],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            if remote_check.returncode != 0:
+                return "no_remote"
+            
+            # Get local and remote commit hashes
+            local_hash = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            remote_hash = subprocess.run(
+                ['git', 'rev-parse', remote_branch],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            if local_hash.returncode != 0 or remote_hash.returncode != 0:
+                return "unknown"
+            
+            local_commit = local_hash.stdout.strip()
+            remote_commit = remote_hash.stdout.strip()
+            
+            if local_commit == remote_commit:
+                return "synced"
+            
+            # Check if local is ahead of remote
+            ahead_check = subprocess.run(
+                ['git', 'rev-list', '--count', f"{remote_branch}..HEAD"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # Check if local is behind remote
+            behind_check = subprocess.run(
+                ['git', 'rev-list', '--count', f"HEAD..{remote_branch}"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            if ahead_check.returncode == 0 and behind_check.returncode == 0:
+                ahead_count = int(ahead_check.stdout.strip() or 0)
+                behind_count = int(behind_check.stdout.strip() or 0)
+                
+                if ahead_count > 0 and behind_count > 0:
+                    return f"diverged"  # Both ahead and behind
+                elif ahead_count > 0:
+                    return f"ahead"  # Local is ahead
+                elif behind_count > 0:
+                    return f"behind"  # Local is behind
+                else:
+                    return "synced"
+            
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired, ValueError):
+            pass
+        
+        return "unknown"
 
     def stop(self):
         self.running = False
@@ -353,10 +444,10 @@ class GitBatchManager(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         
         # Repository table
-        self.repo_table = QTableWidget(0, 7)  # Checkbox, Name, Path, Branch, Status, Last Commit, Author, Remote URL
+        self.repo_table = QTableWidget(0, 8)  # Checkbox, Name, Path, Branch, Status, Sync Status, Last Commit, Author, Remote URL
         self.repo_table.setHorizontalHeaderLabels([
             "", self.tr("repo_name"), self.tr("repo_path"),
-            self.tr("branch"), self.tr("status"), self.tr("last_commit"),
+            self.tr("branch"), self.tr("status"), self.tr("sync_status"), self.tr("last_commit"),
             self.tr("author"), self.tr("remote_url")
         ])
         
@@ -369,6 +460,7 @@ class GitBatchManager(QMainWindow):
         self.repo_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.repo_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.repo_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.repo_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
         self.repo_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.repo_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         
@@ -385,6 +477,20 @@ class GitBatchManager(QMainWindow):
         self.deselect_all_btn = QPushButton(self.tr("deselect_all"))
         self.deselect_all_btn.clicked.connect(self.deselect_all_repos)
         selection_layout.addWidget(self.deselect_all_btn)
+        
+        # Add filter by sync status
+        sync_filter_label = QLabel(self.tr("filter_by_sync"))
+        selection_layout.addWidget(sync_filter_label)
+        
+        self.sync_filter_combo = QComboBox()
+        self.sync_filter_combo.addItem(self.tr("filter_all"), "all")
+        self.sync_filter_combo.addItem(self.tr("sync_behind"), "behind")
+        self.sync_filter_combo.addItem(self.tr("sync_ahead"), "ahead")
+        self.sync_filter_combo.addItem(self.tr("sync_diverged"), "diverged")
+        self.sync_filter_combo.addItem(self.tr("sync_synced"), "synced")
+        self.sync_filter_combo.addItem(self.tr("sync_no_remote"), "no_remote")
+        self.sync_filter_combo.currentTextChanged.connect(self.apply_sync_filter)
+        selection_layout.addWidget(self.sync_filter_combo)
         
         selection_layout.addStretch()
         
@@ -488,13 +594,14 @@ class GitBatchManager(QMainWindow):
         self.scanner.finished_signal.connect(self.scan_finished)
         self.scanner.start()
     
-    def add_repository(self, repo_name, repo_path, branch, status, last_commit, author, remote_url):
+    def add_repository(self, repo_name, repo_path, branch, status, last_commit, author, remote_url, sync_status):
         """Add a repository to the table"""
         # Store repository data
         self.repositories[repo_path] = {
             'name': repo_name,
             'branch': branch,
             'status': status,
+            'sync_status': sync_status,
             'last_commit': last_commit,
             'author': author,
             'remote_url': remote_url
@@ -524,7 +631,7 @@ class GitBatchManager(QMainWindow):
         self.repo_table.setItem(row, 3, QTableWidgetItem(branch))
         
         # Status
-        status_item = QTableWidgetItem(status)
+        status_item = QTableWidgetItem(self.tr(f"status_{status}"))
         if status == "clean":
             status_item.setForeground(QColor(0, 128, 0))  # Green
         elif status == "modified":
@@ -533,11 +640,27 @@ class GitBatchManager(QMainWindow):
             status_item.setForeground(QColor(128, 128, 128))  # Gray
         self.repo_table.setItem(row, 4, status_item)
         
+        # Sync status
+        sync_status_item = QTableWidgetItem(self.tr(f"sync_{sync_status}"))
+        if sync_status == "synced":
+            sync_status_item.setForeground(QColor(0, 128, 0))  # Green
+        elif sync_status == "behind":
+            sync_status_item.setForeground(QColor(255, 0, 0))  # Red
+        elif sync_status == "ahead":
+            sync_status_item.setForeground(QColor(0, 0, 255))  # Blue
+        elif sync_status == "diverged":
+            sync_status_item.setForeground(QColor(128, 0, 128))  # Purple
+        elif sync_status == "no_remote":
+            sync_status_item.setForeground(QColor(128, 128, 128))  # Gray
+        else:  # unknown
+            sync_status_item.setForeground(QColor(128, 128, 128))  # Gray
+        self.repo_table.setItem(row, 5, sync_status_item)
+        
         # Last commit
-        self.repo_table.setItem(row, 5, QTableWidgetItem(last_commit))
+        self.repo_table.setItem(row, 6, QTableWidgetItem(last_commit))
         
         # Author
-        self.repo_table.setItem(row, 6, QTableWidgetItem(author))
+        self.repo_table.setItem(row, 7, QTableWidgetItem(author))
         
         # Remote URL
         url_item = QTableWidgetItem(remote_url)
@@ -546,10 +669,11 @@ class GitBatchManager(QMainWindow):
             font = QFont()
             font.setUnderline(True)
             url_item.setFont(font)
-        self.repo_table.setItem(row, 7, url_item)
+        self.repo_table.setItem(row, 8, url_item)
         
         # Log the found repository
-        self.log_message(f"Found Git repository: {repo_name} ({branch})", "info")
+        sync_info = f" [{self.tr(f'sync_{sync_status}')}]" if sync_status != "unknown" else ""
+        self.log_message(f"Found Git repository: {repo_name} ({branch}){sync_info}", "info")
     
     def scan_finished(self):
         """Called when repository scanning is complete"""
@@ -648,9 +772,24 @@ class GitBatchManager(QMainWindow):
         self.pull_btn.setEnabled(enabled)
         self.push_btn.setEnabled(enabled)
     
+    def apply_sync_filter(self):
+        """Apply filter based on sync status"""
+        filter_value = self.sync_filter_combo.currentData()
+        
+        for row in range(self.repo_table.rowCount()):
+            should_show = True
+            
+            if filter_value != "all":
+                sync_status_item = self.repo_table.item(row, 5)
+                if sync_status_item:
+                    repo_path = self.repo_table.item(row, 2).text()
+                    repo_sync_status = self.repositories.get(repo_path, {}).get('sync_status', 'unknown')
+                    should_show = repo_sync_status == filter_value
+            
+            self.repo_table.setRowHidden(row, not should_show)
+
     def log_message(self, message, level="info"):
         """Add a message to the log panel with appropriate formatting and icons"""
-        from PySide6.QtCore import QDateTime
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
 
         # Define icons for each level
@@ -739,7 +878,8 @@ class GitBatchManager(QMainWindow):
         # Table headers
         self.repo_table.setHorizontalHeaderLabels([
             "", self.tr("repo_name"), self.tr("repo_path"),
-            self.tr("branch"), self.tr("status")
+            self.tr("branch"), self.tr("status"), self.tr("sync_status"),
+            self.tr("last_commit"), self.tr("author"), self.tr("remote_url")
         ])
     
     def show_about(self):
@@ -748,8 +888,8 @@ class GitBatchManager(QMainWindow):
     
     def handle_cell_click(self, row, column):
         """Handle cell click events"""
-        # Check if the clicked cell is in the URL column (column 7)
-        if column == 7:
+        # Check if the clicked cell is in the URL column (column 8)
+        if column == 8:
             url = self.repo_table.item(row, column).text()
             if url and (url.startswith("http://") or url.startswith("https://")):
                 QDesktopServices.openUrl(QUrl(url))

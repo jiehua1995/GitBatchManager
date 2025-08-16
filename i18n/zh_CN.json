@@ -7,13 +7,28 @@
     "repo_path": "路径",
     "branch": "分支",
     "status": "状态",
+    "sync_status": "同步状态",
+    "last_commit": "最后提交",
+    "author": "作者",
+    "remote_url": "远程地址",
     "logs": "日志",
     "progress": "进度",
     "select_all": "全选",
     "deselect_all": "全不选",
+    "filter_by_sync": "按同步状态筛选:",
+    "filter_all": "所有",
     "about": "关于",
     "about_text": "Git 批量管理工具 - Jie Hua, 2025",
-    "language": "语言"
+    "language": "语言",
+    "status_clean": "干净",
+    "status_modified": "已修改",
+    "status_unknown": "未知",
+    "sync_synced": "已同步",
+    "sync_behind": "落后",
+    "sync_ahead": "领先",
+    "sync_diverged": "分歧",
+    "sync_no_remote": "无远程",
+    "sync_unknown": "未知"
 }
 
 
