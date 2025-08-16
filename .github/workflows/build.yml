@@ -36,29 +36,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential python3.12-dev zip
         elif [[ "$(uname)" == "Darwin" ]]; then
-          brew install python@3.12 zip
+          brew install python@3.12
         fi
 
     - name: Build executable with build.py
       run: |
-        python build.py | tee build.log
+        python build.py --lang en | tee build.log
 
     - name: Prepare release version
       id: release
       run: |
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set DATE=%%c.%%a.%%b
-          echo "RELEASE_TAG=%DATE%" >> $GITHUB_ENV
-          echo "RELEASE_NAME=Release-%DATE%" >> $GITHUB_ENV
-        else
-          DATE=$(date +'%Y.%m.%d')
-          echo "RELEASE_TAG=$DATE" >> $GITHUB_ENV
-          echo "RELEASE_NAME=Release-$DATE" >> $GITHUB_ENV
-        fi
-
-    - name: Zip dist folder
-      run: |
-        zip -r dist-${{ runner.os }}.zip dist
+        DATE=$(date +'%Y.%m.%d')
+        echo "RELEASE_TAG=$DATE" >> $GITHUB_ENV
+        echo "RELEASE_NAME=Release-$DATE" >> $GITHUB_ENV
 
     - name: Create GitHub Release
       id: create_release
@@ -75,6 +65,6 @@ jobs:
       uses: actions/upload-release-asset@v1
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist-${{ runner.os }}.zip
-        asset_name: dist-${{ runner.os }}.zip
+        asset_path: dist/
+        asset_name: ${{ matrix.os }}-dist.zip
         asset_content_type: application/zip
