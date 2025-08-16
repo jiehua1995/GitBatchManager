@@ -2,10 +2,11 @@ import os
 import subprocess
 import platform
 import PySide6
-import json
+import datetime
 
-
-# 多语言文本定义
+# ----------------------------
+# Multi-language messages
+# ----------------------------
 MESSAGES = {
     "zh_CN": {
         "select_language": "请选择语言 / Please select language / Bitte wählen Sie eine Sprache:",
@@ -24,7 +25,7 @@ MESSAGES = {
         "plugin_added": "✅ 插件路径已添加到命令: {} -> PySide6/{}",
         "i18n_added": "✅ 语言文件路径已添加到命令: i18n",
         "final_command": "🔧 最终打包命令:",
-        "build_success": "✅ 打包成功，可执行文件已生成在 dist 文件夹中。",
+        "build_success": "✅ 打包成功，可执行文件已生成在 dist 文件夹中: {}",
         "build_failed": "❌ 打包失败，错误码: {}",
         "log_saved": "📄 完整日志已保存到 {}"
     },
@@ -45,39 +46,19 @@ MESSAGES = {
         "plugin_added": "✅ Plugin path added to command: {} -> PySide6/{}",
         "i18n_added": "✅ Language files path added to command: i18n",
         "final_command": "🔧 Final packaging command:",
-        "build_success": "✅ Build successful, executable generated in dist folder.",
+        "build_success": "✅ Build successful, executable generated: {}",
         "build_failed": "❌ Build failed, error code: {}",
         "log_saved": "📄 Complete log saved to {}"
-    },
-    "de": {
-        "select_language": "请选择语言 / Please select language / Bitte wählen Sie eine Sprache:",
-        "options": "1. 中文\n2. English\n3. Deutsch",
-        "enter_choice": "Geben Sie Ihre Wahl ein (1-3): ",
-        "invalid_choice": "Ungültige Auswahl, verwende Standard Deutsch",
-        "detecting_paths": "🔍 Erkenne Kandidatenpfade:",
-        "path_exists": "existiert",
-        "path_not_exists": "existiert nicht",
-        "no_plugin_found": "⚠ Plugin-Verzeichnis nicht gefunden, PySide6-Installation möglicherweise unvollständig oder Nuitka hat eingebaute Plugins.",
-        "detected_os": "🖥️ Erkanntes Betriebssystem:",
-        "start_packaging": "Beginne mit dem Verpacken...",
-        "added_windows_params": "✅ Windows-spezifische Parameter hinzugefügt",
-        "added_platform_params": "✅ {}-spezifische Parameter hinzugefügt",
-        "unknown_os": "⚠️ Unbekanntes Betriebssystem: {}, verwende Standardparameter",
-        "plugin_added": "✅ Plugin-Pfad zum Befehl hinzugefügt: {} -> PySide6/{}",
-        "i18n_added": "✅ Sprachdateien-Pfad zum Befehl hinzugefügt: i18n",
-        "final_command": "🔧 Finaler Verpackungsbefehl:",
-        "build_success": "✅ Build erfolgreich, ausführbare Datei im dist-Ordner generiert.",
-        "build_failed": "❌ Build fehlgeschlagen, Fehlercode: {}",
-        "log_saved": "📄 Vollständiges Log gespeichert in {}"
     }
 }
 
-
+# ----------------------------
+# Language selection
+# ----------------------------
 def select_language():
-    """选择语言"""
+    """Select language for messages"""
     print(MESSAGES["zh_CN"]["select_language"])
     print(MESSAGES["zh_CN"]["options"])
-    
     try:
         choice = input(MESSAGES["zh_CN"]["enter_choice"])
         if choice == "1":
@@ -92,17 +73,18 @@ def select_language():
     except (KeyboardInterrupt, EOFError):
         return "zh_CN"
 
-
 def get_message(lang, key, *args):
-    """获取指定语言的消息"""
+    """Retrieve the message in the chosen language"""
     message = MESSAGES[lang].get(key, MESSAGES["en"].get(key, key))
     if args:
         return message.format(*args)
     return message
 
-
+# ----------------------------
+# Detect PySide6 plugin paths
+# ----------------------------
 def get_pyside6_plugin_path(lang="zh_CN"):
-    """获取 PySide6 插件路径"""
+    """Detect PySide6 plugin directories"""
     base_path = os.path.dirname(PySide6.__file__)
     candidates = [
         ("plugins", os.path.join(base_path, "plugins")),
@@ -122,17 +104,26 @@ def get_pyside6_plugin_path(lang="zh_CN"):
         print(get_message(lang, "no_plugin_found"))
     return valid_paths
 
-
+# ----------------------------
+# Build executable
+# ----------------------------
 def build_executable():
-    """使用 Nuitka 打包为可执行文件"""
-    # 选择语言
+    """Build executable using Nuitka"""
     lang = select_language()
-    
     current_os = platform.system()
     plugin_paths = get_pyside6_plugin_path(lang)
 
     print(get_message(lang, "detected_os"), current_os)
     print(get_message(lang, "start_packaging"))
+
+    # Generate output filename based on date and OS
+    date_str = datetime.datetime.now().strftime("%Y.%m.%d")
+    if current_os == "Windows":
+        outfile = f"GitBatchManager-{date_str}.exe"
+    elif current_os == "Darwin":
+        outfile = f"GitBatchManager-{date_str}.dmg"
+    else:
+        outfile = f"GitBatchManager-{date_str}.tar.gz"
 
     command = [
         "python", "-m", "nuitka",
@@ -140,27 +131,28 @@ def build_executable():
         "--onefile",
         "--enable-plugin=pyside6",
         "--output-dir=dist",
-        "main.py"
+        "main.py",
     ]
 
-    # 根据操作系统添加特定参数
+    # OS-specific options
     if current_os == "Windows":
         command.extend([
-            "--windows-icon-from-ico=icon.png",
+            f"--windows-icon-from-ico=icon.ico",
             "--windows-console-mode=disable"
         ])
         print(get_message(lang, "added_windows_params"))
-    elif current_os in ["Darwin", "Linux"]:  # Darwin 是 macOS 的系统名
+    elif current_os in ["Darwin", "Linux"]:
         command.append("--icon=icon.png")
         print(get_message(lang, "added_platform_params", current_os))
     else:
         print(get_message(lang, "unknown_os", current_os))
 
-    if plugin_paths:
-        for rel, path in plugin_paths:
-            command.append(f"--include-data-dir={path}=PySide6/{rel}")
-            print(get_message(lang, "plugin_added", path, rel))
+    # Add plugin paths
+    for rel, path in plugin_paths:
+        command.append(f"--include-data-dir={path}=PySide6/{rel}")
+        print(get_message(lang, "plugin_added", path, rel))
 
+    # Add i18n folder
     command.append("--include-data-dir=i18n=i18n")
     print(get_message(lang, "i18n_added"))
 
@@ -169,21 +161,19 @@ def build_executable():
 
     log_file = "build.log"
     with open(log_file, "w", encoding="utf-8") as log:
-        # 使用 Popen 实现实时输出
+        # Real-time output
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(process.stdout.readline, ''):
-            print(line, end='')   # 输出到终端
-            log.write(line)       # 写入日志
+            print(line, end='')
+            log.write(line)
         process.stdout.close()
         retcode = process.wait()
 
         if retcode == 0:
-            print(get_message(lang, "build_success"))
+            print(get_message(lang, "build_success", outfile))
         else:
             print(get_message(lang, "build_failed", retcode))
-
         print(get_message(lang, "log_saved", log_file))
-
 
 if __name__ == "__main__":
     build_executable()
