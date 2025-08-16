@@ -56,7 +56,7 @@ MESSAGES = {
 # Language selection
 # ----------------------------
 def select_language():
-    """Select language for messages"""
+    """选择语言（本地交互用）"""
     print(MESSAGES["zh_CN"]["select_language"])
     print(MESSAGES["zh_CN"]["options"])
     try:
@@ -74,17 +74,12 @@ def select_language():
         return "zh_CN"
 
 def get_message(lang, key, *args):
-    """Retrieve the message in the chosen language"""
     message = MESSAGES[lang].get(key, MESSAGES["en"].get(key, key))
     if args:
         return message.format(*args)
     return message
 
-# ----------------------------
-# Detect PySide6 plugin paths
-# ----------------------------
 def get_pyside6_plugin_path(lang="zh_CN"):
-    """Detect PySide6 plugin directories"""
     base_path = os.path.dirname(PySide6.__file__)
     candidates = [
         ("plugins", os.path.join(base_path, "plugins")),
@@ -104,26 +99,12 @@ def get_pyside6_plugin_path(lang="zh_CN"):
         print(get_message(lang, "no_plugin_found"))
     return valid_paths
 
-# ----------------------------
-# Build executable
-# ----------------------------
-def build_executable():
-    """Build executable using Nuitka"""
-    lang = select_language()
+def build_executable(lang):
     current_os = platform.system()
     plugin_paths = get_pyside6_plugin_path(lang)
 
     print(get_message(lang, "detected_os"), current_os)
     print(get_message(lang, "start_packaging"))
-
-    # Generate output filename based on date and OS
-    date_str = datetime.datetime.now().strftime("%Y.%m.%d")
-    if current_os == "Windows":
-        outfile = f"GitBatchManager-{date_str}.exe"
-    elif current_os == "Darwin":
-        outfile = f"GitBatchManager-{date_str}.dmg"
-    else:
-        outfile = f"GitBatchManager-{date_str}.tar.gz"
 
     command = [
         "python", "-m", "nuitka",
@@ -131,13 +112,13 @@ def build_executable():
         "--onefile",
         "--enable-plugin=pyside6",
         "--output-dir=dist",
-        "main.py",
+        "main.py"
     ]
 
-    # OS-specific options
+    # OS-specific params
     if current_os == "Windows":
         command.extend([
-            f"--windows-icon-from-ico=icon.ico",
+            "--windows-icon-from-ico=icon.png",
             "--windows-console-mode=disable"
         ])
         print(get_message(lang, "added_windows_params"))
@@ -147,12 +128,11 @@ def build_executable():
     else:
         print(get_message(lang, "unknown_os", current_os))
 
-    # Add plugin paths
-    for rel, path in plugin_paths:
-        command.append(f"--include-data-dir={path}=PySide6/{rel}")
-        print(get_message(lang, "plugin_added", path, rel))
+    if plugin_paths:
+        for rel, path in plugin_paths:
+            command.append(f"--include-data-dir={path}=PySide6/{rel}")
+            print(get_message(lang, "plugin_added", path, rel))
 
-    # Add i18n folder
     command.append("--include-data-dir=i18n=i18n")
     print(get_message(lang, "i18n_added"))
 
@@ -161,7 +141,6 @@ def build_executable():
 
     log_file = "build.log"
     with open(log_file, "w", encoding="utf-8") as log:
-        # Real-time output
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in iter(process.stdout.readline, ''):
             print(line, end='')
@@ -170,10 +149,20 @@ def build_executable():
         retcode = process.wait()
 
         if retcode == 0:
-            print(get_message(lang, "build_success", outfile))
+            print(get_message(lang, "build_success"))
         else:
             print(get_message(lang, "build_failed", retcode))
+
         print(get_message(lang, "log_saved", log_file))
 
 if __name__ == "__main__":
-    build_executable()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lang", type=str, help="Language code: zh_CN/en/de")
+    args = parser.parse_args()
+    
+    if args.lang:
+        lang = args.lang
+    else:
+        lang = select_language()
+    
+    build_executable(lang)
