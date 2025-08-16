@@ -1,0 +1,19 @@
+{
+    "app_title": "Git 批量管理器",
+    "select_folder": "选择文件夹",
+    "pull": "批量拉取",
+    "push": "批量推送",
+    "repo_name": "仓库名称",
+    "repo_path": "路径",
+    "branch": "分支",
+    "status": "状态",
+    "logs": "日志",
+    "progress": "进度",
+    "select_all": "全选",
+    "deselect_all": "全不选",
+    "about": "关于",
+    "about_text": "Git 批量管理工具 - Jie Hua, 2025",
+    "language": "语言"
+}
+
+

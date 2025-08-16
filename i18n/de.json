@@ -1,0 +1,17 @@
+{
+    "app_title": "Git Batch Manager",
+    "select_folder": "Ordner auswählen",
+    "pull": "Batch Pull",
+    "push": "Batch Push",
+    "repo_name": "Repository-Name",
+    "repo_path": "Pfad",
+    "branch": "Zweig",
+    "status": "Status",
+    "logs": "Protokolle",
+    "progress": "Fortschritt",
+    "select_all": "Alles auswählen",
+    "deselect_all": "Alles abwählen",
+    "about": "Über",
+    "about_text": "Git Batch Management Tool - Jie Hua, 2025",
+    "language": "Sprache"
+}
