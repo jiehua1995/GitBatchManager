@@ -34,7 +34,7 @@ conda activate gitmanager
 Install the required Python packages using the following command:
 
 ```bash
-pip install PySide6 nuitka
+pip install PySide6 nuitka argparse imageio
 ```
 
 ## Usage Instructions

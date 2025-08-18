@@ -4,6 +4,10 @@ import platform
 import PySide6
 import datetime
 import argparse
+import sys, io
+
+# Support for UTF-8 encoding in Windows console
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ----------------------------
 # Multi-language messages
